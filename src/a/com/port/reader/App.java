@@ -18,14 +18,25 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fazecast.jSerialComm.SerialPort;
 import com.fazecast.jSerialComm.SerialPortDataListener;
 import com.fazecast.jSerialComm.SerialPortEvent;
 
+import a.com.port.reader.model.DriverLicense;
+import net.idscan.dlparser.DLParser;
+import net.idscan.dlparser.DLParser.DLParserException;
+import net.idscan.dlparser.DLParser.DLResult;
+
 public class App {
+	private String _KEY = "";
+
 	private final int W = 800;
 	private final int H = 310;
 	private final int BUFFER_TIMEOUT = 800;
+
+	private final ObjectMapper objMapper = new ObjectMapper();
 
 	private SerialPort serialPort;
 	private JComboBox<String> cbPort;
@@ -198,8 +209,11 @@ public class App {
 										(b, e) -> b.write(e, 0, e.length), (a, b) -> {
 										}).toByteArray();
 
-								String data = new String(dataArr);
-								System.out.println("\n***\n" + data);
+								System.out.println("\n***");
+								System.out.println(new String(dataArr));
+								System.out.println("***\n");
+
+								String data = parse2Json(dataArr);
 								txtArea.setText(data);
 
 								dataList.clear();
@@ -244,6 +258,28 @@ public class App {
 //			serialPort = null;
 		}
 		return true;
+	}
+
+	public String parse2Json(byte[] data) {
+		String jsonDl = "{}";
+		DLParser parser = new DLParser();
+		try {
+			parser.setup(_KEY);
+			DLResult res = parser.parse(data);
+
+			DriverLicense dl = new DriverLicense();
+			dl.setName(res.fullName);
+			dl.setLicenseNumber(res.licenseNumber);
+			dl.setJurisdictionCode(res.jurisdictionCode);
+
+			jsonDl = objMapper.writerWithDefaultPrettyPrinter().writeValueAsString(dl);
+			System.out.println(jsonDl);
+
+		} catch (DLParserException | JsonProcessingException e) {
+			e.printStackTrace();
+		}
+
+		return jsonDl;
 	}
 
 	public App() {
