@@ -1,5 +1,6 @@
 package a.com.port.reader;
 
+import java.awt.AWTException;
 import java.awt.Color;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -24,6 +25,7 @@ import com.fazecast.jSerialComm.SerialPort;
 import com.fazecast.jSerialComm.SerialPortDataListener;
 import com.fazecast.jSerialComm.SerialPortEvent;
 
+import a.com.port.reader.helper.AsciiKeyTyper;
 import a.com.port.reader.model.DriverLicense;
 import net.idscan.dlparser.DLParser;
 import net.idscan.dlparser.DLParser.DLParserException;
@@ -39,6 +41,7 @@ public class App {
 	private final ObjectMapper objMapper = new ObjectMapper();
 
 	private SerialPort serialPort;
+	private JButton btnClose;
 	private JComboBox<String> cbPort;
 	private JComboBox<Integer> cbBaudRate;
 	private JComboBox<Integer> cbDataBits;
@@ -128,7 +131,7 @@ public class App {
 			}
 		});
 
-		JButton btnClose = new JButton("Close");
+		btnClose = new JButton("Close");
 		btnClose.setBounds(160, 220, 120, 30);
 		panel.add(btnClose);
 		btnClose.addActionListener((event) -> {
@@ -162,6 +165,10 @@ public class App {
 	}
 
 	private boolean openCOM() {
+		if (cbPort.getItemCount() == 0) {
+			JOptionPane.showMessageDialog(null, "No COM port found!", "Error", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
 		if (serialPort != null && serialPort.isOpen()) {
 			JOptionPane.showMessageDialog(null, "COM port has been connected!");
 			return false;
@@ -180,55 +187,72 @@ public class App {
 			return false;
 		}
 
-		final List<byte[]> dataList = new ArrayList<byte[]>();
+		try {
+			final AsciiKeyTyper key = new AsciiKeyTyper();
 
-		System.out.println("\nNow waiting asynchronously for all possible listening events...");
-		serialPort.addDataListener(new SerialPortDataListener() {
-			// @Override
-			public int getListeningEvents() {
-				return SerialPort.LISTENING_EVENT_PARITY_ERROR | SerialPort.LISTENING_EVENT_DATA_WRITTEN
-						| SerialPort.LISTENING_EVENT_BREAK_INTERRUPT | SerialPort.LISTENING_EVENT_CARRIER_DETECT
-						| SerialPort.LISTENING_EVENT_CTS | SerialPort.LISTENING_EVENT_DSR
-						| SerialPort.LISTENING_EVENT_RING_INDICATOR | SerialPort.LISTENING_EVENT_PORT_DISCONNECTED
-						| SerialPort.LISTENING_EVENT_FRAMING_ERROR | SerialPort.LISTENING_EVENT_FIRMWARE_OVERRUN_ERROR
-						| SerialPort.LISTENING_EVENT_SOFTWARE_OVERRUN_ERROR | SerialPort.LISTENING_EVENT_DATA_AVAILABLE;
-			}
+			final List<byte[]> dataList = new ArrayList<byte[]>();
 
-			// @Override
-			public void serialEvent(SerialPortEvent event) {
-				if (event.getEventType() == SerialPort.LISTENING_EVENT_DATA_AVAILABLE) {
-					byte[] buffer = new byte[event.getSerialPort().bytesAvailable()];
-					event.getSerialPort().readBytes(buffer, buffer.length);
+			System.out.println("\nNow waiting asynchronously for all possible listening events...");
+			serialPort.addDataListener(new SerialPortDataListener() {
+				// @Override
+				public int getListeningEvents() {
+					return SerialPort.LISTENING_EVENT_PARITY_ERROR | SerialPort.LISTENING_EVENT_DATA_WRITTEN
+							| SerialPort.LISTENING_EVENT_BREAK_INTERRUPT | SerialPort.LISTENING_EVENT_CARRIER_DETECT
+							| SerialPort.LISTENING_EVENT_CTS | SerialPort.LISTENING_EVENT_DSR
+							| SerialPort.LISTENING_EVENT_RING_INDICATOR | SerialPort.LISTENING_EVENT_PORT_DISCONNECTED
+							| SerialPort.LISTENING_EVENT_FRAMING_ERROR
+							| SerialPort.LISTENING_EVENT_FIRMWARE_OVERRUN_ERROR
+							| SerialPort.LISTENING_EVENT_SOFTWARE_OVERRUN_ERROR
+							| SerialPort.LISTENING_EVENT_DATA_AVAILABLE;
+				}
 
-					if (dataList.size() == 0) {
-						(new Thread(() -> {
-							try {
-								Thread.sleep(BUFFER_TIMEOUT);
+				// @Override
+				public void serialEvent(SerialPortEvent event) {
+					if (event.getEventType() == SerialPort.LISTENING_EVENT_DATA_AVAILABLE) {
+						byte[] buffer = new byte[event.getSerialPort().bytesAvailable()];
+						event.getSerialPort().readBytes(buffer, buffer.length);
 
-								byte[] dataArr = dataList.stream().collect(() -> new ByteArrayOutputStream(),
-										(b, e) -> b.write(e, 0, e.length), (a, b) -> {
-										}).toByteArray();
+						if (dataList.size() == 0) {
+							(new Thread(() -> {
+								try {
+									Thread.sleep(BUFFER_TIMEOUT);
 
-								System.out.println("\n***");
-								System.out.println(new String(dataArr));
-								System.out.println("***\n");
+									byte[] dataArr = dataList.stream().collect(() -> new ByteArrayOutputStream(),
+											(b, e) -> b.write(e, 0, e.length), (a, b) -> {
+											}).toByteArray();
+									dataList.clear();
 
-								String data = parse2Json(dataArr);
-								txtArea.setText(data);
+									System.out.println("\n***");
+									System.out.println(new String(dataArr));
+									System.out.println("***\n");
 
-								dataList.clear();
-							} catch (InterruptedException e) {
-								e.printStackTrace();
-							}
-						})).start();
+									String data = parse2Json(dataArr);
+									txtArea.setText(data);
+
+									// Generate keystrokes
+									for (char ch : data.toCharArray()) {
+										key.typeKey(ch);
+									}
+								} catch (InterruptedException e) {
+									e.printStackTrace();
+								}
+							})).start();
+						}
+						dataList.add(buffer);
+					} else if (event.getEventType() == SerialPort.LISTENING_EVENT_PORT_DISCONNECTED) {
+						System.out.println("Received event type: LISTENING_EVENT_PORT_DISCONNECTED");
+						btnClose.doClick();
+					} else {
+						System.out.println("Received event type: " + event.getEventType());
 					}
-					dataList.add(buffer);
-				} else if (event.getEventType() == SerialPort.LISTENING_EVENT_PORT_DISCONNECTED)
-					System.out.println("Received event type: LISTENING_EVENT_PORT_DISCONNECTED");
-				else
-					System.out.println("Received event type: " + event.getEventType());
-			}
-		});
+				}
+			});
+
+		} catch (AWTException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+			JOptionPane.showMessageDialog(null, e1.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+		}
 
 		int parity = SerialPort.NO_PARITY;
 		String parityStr = (String) cbParity.getSelectedItem();
@@ -268,15 +292,19 @@ public class App {
 			DLResult res = parser.parse(data);
 
 			DriverLicense dl = new DriverLicense();
+			dl.setDocumentType(res.documentType);
 			dl.setName(res.fullName);
 			dl.setLicenseNumber(res.licenseNumber);
 			dl.setJurisdictionCode(res.jurisdictionCode);
+			dl.setCountryCode(res.countryCode);
 
-			jsonDl = objMapper.writerWithDefaultPrettyPrinter().writeValueAsString(dl);
+//			jsonDl = objMapper.writerWithDefaultPrettyPrinter().writeValueAsString(dl);
+			jsonDl = objMapper.writeValueAsString(dl);
 			System.out.println(jsonDl);
 
 		} catch (DLParserException | JsonProcessingException e) {
 			e.printStackTrace();
+			JOptionPane.showMessageDialog(null, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 
 		return jsonDl;
